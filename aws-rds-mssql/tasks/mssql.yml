@@ -1,0 +1,120 @@
+- rds_param_group:
+    state: present
+    name: '{{name_rds}}-{{db_engine}}-{{engine_version[:2]}}'
+    description: '{{name_rds}} parameters'
+    engine: '{{db_engine}}-{{engine_version[:4]}}'
+    apply_immediately: 'yes'
+    params: '{{parameters}}'
+
+- name: Check that option group exist
+  command: >
+    aws rds describe-option-groups
+    --option-group-name '{{name_rds}}-{{db_engine}}-{{engine_version[:2]}}'
+  ignore_errors: True
+  register: options_status
+
+- name: Create option group
+  command: > 
+    aws rds create-option-group 
+    --option-group-name '{{name_rds}}-{{db_engine}}-{{engine_version[:2]}}'
+    --engine-name {{db_engine}}
+    --major-engine-version {{engine_version}}
+    --option-group-description {{name_rds}}
+  when: "'OptionGroupNotFoundFault' in options_status.stderr"
+
+- name: Create option group
+  command: > 
+    aws rds add-option-to-option-group
+    --option-group-name '{{name_rds}}-{{db_engine}}-{{engine_version[:2]}}'
+    --apply-immediately
+    --options 'OptionName=TDE,OptionSettings=[]'
+  when: encrypt == "true"
+
+- name: Enable integrated security
+  command: > 
+    aws rds add-option-to-option-group
+    --option-group-name '{{name_rds}}-{{db_engine}}-{{engine_version[:2]}}'
+    --apply-immediately
+    --options 'OptionName=TDE,OptionSettings=[]'
+
+- rds:
+    command: create
+    region: '{{ aws_region }}'
+    instance_name: '{{name_rds}}'
+    db_engine: '{{db_engine}}'
+    engine_version: '{{engine_version}}'
+    size: '{{rds_storage_size}}'
+    iops: '1000'
+    instance_type: '{{rds_instance_type}}'
+    vpc_security_groups: '{{security_group_id}}'
+    option_group: '{{name_rds}}-{{db_engine}}-{{engine_version[:2]}}'
+    parameter_group: '{{name_rds}}-{{db_engine}}-{{engine_version[:2]}}'
+    subnet: '{{ db_subnet_group }}'
+    license_model: 'license-included'
+    publicly_accessible: '{{publicly_accessible}}'
+    username: '{{db_user}}'
+    password: "{{ lookup('password', '/tmp/passwordfile chars=ascii_letters,digits,hexdigits') }}"
+  when: prov_iops == "0"
+  register: rds_facts
+
+- rds:
+    command: create
+    region: '{{ aws_region }}'
+    instance_name: '{{name_rds}}'
+    db_engine: '{{db_engine}}'
+    engine_version: '{{engine_version}}'
+    size: '{{rds_storage_size}}'
+    iops: '{{ prov_iops }}'
+    instance_type: '{{rds_instance_type}}'
+    vpc_security_groups: '{{security_group_id}}'
+    option_group: '{{name_rds}}-{{db_engine}}-{{engine_version[:2]}}'
+    parameter_group: '{{name_rds}}-{{db_engine}}-{{engine_version[:2]}}'
+    subnet: '{{ db_subnet_group }}'
+    license_model: 'license-included'
+    publicly_accessible: '{{publicly_accessible}}'
+    username: '{{db_user}}'
+    password: "{{ lookup('password', '/tmp/passwordfile chars=ascii_letters,digits,hexdigits') }}"
+  when: prov_iops != "0"
+  register: rds_facts
+
+- pause:
+    seconds: 5
+
+- name: Wait "available" state
+  command: >
+    aws rds wait db-instance-available
+    --db-instance-identifier {{name_rds}}
+
+- name: Enable integrated security
+  command: > 
+    aws rds modify-db-instance
+    --db-instance-identifier '{{name_rds}}'
+    --domain '{{domain}}'
+    --domain-iam-role-name '{{ iam_rds_ad_join.iam_role.role_name }}'
+    --master-user-password "{{ lookup('password', '/tmp/passwordfile chars=ascii_letters,digits,hexdigits') }}"
+    --apply-immediately
+    
+- name: Wait "available" state
+  command: >
+    aws rds wait db-instance-available
+    --db-instance-identifier {{name_rds}}
+
+- name: Convert storage to gp2
+  command: >
+    aws rds modify-db-instance
+    --db-instance-identifier '{{name_rds}}'
+    --storage-type 'gp2'
+    --apply-immediately
+  when: prov_iops == "0"
+  register: rds_facts
+
+- name: get instance
+  shell: aws rds describe-db-instances --db-instance-identifier '{{name_rds}}'
+  register: result
+- name: set endpoint
+  set_fact:
+    rds_results: '{{ (result.stdout|from_json)["DBInstances"] }}'
+
+- name: Setup users
+  command: >
+    /opt/mssql-tools/bin/sqlcmd -U '{{db_user}}' -P "{{ lookup('password', '/tmp/passwordfile chars=ascii_letters,digits,hexdigits') }}" -S '{{rds_results[0].Endpoint.Address}}' -i '{{privileges_file}}'
