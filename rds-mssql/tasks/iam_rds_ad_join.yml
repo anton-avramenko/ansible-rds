@@ -1,0 +1,9 @@
+- name: RDS Directory Service join
+  iam_role:
+    name: '{{ join_rds_role }}'
+    assume_role_policy_document: "{ \"Version\": \"2012-10-17\", \"Statement\": [{ \"Sid\": \"\", \"Effect\": \"Allow\", \"Principal\": { \"Service\": \"rds.amazonaws.com\" }, \"Action\": \"sts:AssumeRole\" }] }"
+    state: present
+    managed_policy:
+      - "arn:aws:iam::aws:policy/service-role/AmazonRDSDirectoryServiceAccess"
+      - "arn:aws:iam::aws:policy/service-role/RDSCloudHsmAuthorizationRole"
+  register: iam_rds_ad_join
