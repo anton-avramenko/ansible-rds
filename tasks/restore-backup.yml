@@ -12,6 +12,45 @@
     aws rds wait db-snapshot-completed
     --db-snapshot-identifier "{{name_rds}}-copy-{{date}}"
 
+- rds_param_group:
+    state: present
+    name: '{{name_rds}}-{{db_engine}}-{{engine_version[:2]}}'
+    description: '{{name_rds}} parameters'
+    engine: '{{db_engine}}-{{engine_version[:4]}}'
+    apply_immediately: 'yes'
+    params: '{{parameters}}'
+
+- name: Check that option group exist
+  command: >
+    aws rds describe-option-groups
+    --option-group-name '{{name_rds}}-{{db_engine}}-{{engine_version[:2]}}'
+  ignore_errors: True
+  register: options_status
+
+- name: Create option group
+  command: >
+    aws rds create-option-group
+    --option-group-name '{{name_rds}}-{{db_engine}}-{{engine_version[:2]}}'
+    --engine-name {{db_engine}}
+    --major-engine-version {{engine_version}}
+    --option-group-description {{name_rds}}
+  when: "'OptionGroupNotFoundFault' in options_status.stderr"
+
+- name: Create option group
+  command: >
+    aws rds add-option-to-option-group
+    --option-group-name '{{name_rds}}-{{db_engine}}-{{engine_version[:2]}}'
+    --apply-immediately
+    --options 'OptionName=TDE,OptionSettings=[]'
+  when: encrypt == "true"
+
+- name: Enable integrated security
+  command: >
+    aws rds add-option-to-option-group
+    --option-group-name '{{name_rds}}-{{db_engine}}-{{engine_version[:2]}}'
+    --apply-immediately
+    --options 'OptionName=TDE,OptionSettings=[]'
+
 - rds:
     command: restore
     region: '{{ aws_region }}'
