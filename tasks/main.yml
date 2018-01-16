@@ -1,5 +1,5 @@
 - import_tasks: iam_rds_ad_join.yml
 - import_tasks: mssql.yml
   when: restore_snapshot is undefined
-- import_tasks: restore_backup.yml
+- import_tasks: restore-backup.yml
   when: restore_snapshot is defined
